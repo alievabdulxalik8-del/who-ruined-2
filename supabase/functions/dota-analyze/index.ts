@@ -7,8 +7,9 @@
 // POST { feedback: { match_id, slot | null, comment? } } — кнопка «Не согласен» (slot null = «проиграли командой»)
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { scorePlayers, teamReport, verdictFor } from './score.ts';
+import { STRATZ_DETAIL_QUERY, chatReport, farmReport, stratzDetails, type Detail } from './extras.ts';
 
-const VERSION = 6; // версия логики: при изменении старые разборы в кеше пересчитываются
+const VERSION = 7; // версия логики: при изменении старые разборы в кеше пересчитываются
 const OD = 'https://api.opendota.com/api';
 const STRATZ = 'https://api.stratz.com/graphql';
 const PARSE_WAIT_MS = 4 * 60_000; // сколько ждём разбора OpenDota/Stratz, потом считаем по тому, что есть
@@ -101,6 +102,13 @@ const itemRefs = () => reference<Record<string, [string, string]>>('ref:items', 
   return out;
 });
 
+// id фразы колеса чата → текст
+const wheelRefs = () => reference<Record<string, string>>('ref:chatwheel', `${OD}/constants/chat_wheel`, (raw) => {
+  const out: Record<string, string> = {};
+  for (const [k, w] of Object.entries<any>(raw)) if (w?.message || w?.label) out[k] = w.message ?? w.label;
+  return out;
+});
+
 // ---------- шаг 1: ввод ----------
 
 function parseMatchId(input: unknown): string | null {
@@ -189,6 +197,16 @@ async function fetchStratz(matchId: string): Promise<StratzResult> {
     return { ok: true, match: data.match, missing: noPositions };
   } catch (e) {
     return { ok: false, error: String((e as Error).message ?? e) };
+  }
+}
+
+// Кривые фарма и позиции на карте — отдельным запросом: ответ большой (сотни КБ), нужен один раз на разбор.
+async function fetchStratzDetails(matchId: string): Promise<Map<number, Detail> | null> {
+  try {
+    return stratzDetails(await stratzCall(STRATZ_DETAIL_QUERY, { id: Number(matchId) }));
+  } catch (e) {
+    console.error('stratz details', e);
+    return null;
   }
 }
 
@@ -300,7 +318,10 @@ function leaveMinute(p: any): number | null {
   return last && typeof last.time === 'number' ? Math.max(0, Math.floor(last.time / 60)) : null;
 }
 
-function analyze(matchId: string, od: any, stratz: any, heroes: Heroes, items: Record<string, [string, string]>, parseState: any) {
+function analyze(
+  matchId: string, od: any, stratz: any, heroes: Heroes, items: Record<string, [string, string]>, parseState: any,
+  details: Map<number, Detail> | null = null, wheel: Record<string, string> = {},
+) {
   const radiantWin = !!od.radiant_win;
   const loser: 'radiant' | 'dire' = radiantWin ? 'dire' : 'radiant';
   const parsed = od.version != null;
@@ -331,6 +352,7 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Heroes, items: R
   const sp = new Map<number, any>();
   if (stratz.ok) for (const p of stratz.match.players ?? []) sp.set(p.playerSlot, p);
 
+  const itemNames: Record<string, string> = Object.fromEntries(Object.values(items).map(([k, n]) => [k, n]));
   const team = (side: string) => od.players.filter((p: any) => sideOf(p.player_slot) === side);
   const odPos = new Map<number, number>();
   if (parsed) {
@@ -373,6 +395,9 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Heroes, items: R
       gold_10: p.gold_t?.[10] ?? null,
       lh_10: p.lh_t?.[10] ?? null,
       wards: p.obs_placed != null ? (p.obs_placed ?? 0) + (p.sen_placed ?? 0) : null,
+      farm: farmReport(p, details?.get(p.player_slot), itemNames, od.duration),
+      heat: details?.get(p.player_slot)?.heat ?? null,
+      route: details?.get(p.player_slot)?.route ?? null,
     };
   });
 
@@ -462,7 +487,7 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Heroes, items: R
   players.forEach((p: any, i: number) => { p.score = scores[i].total; p.score_raw = scores[i].raw_total ?? null; p.score_parts = scores[i].parts; p.score_missing = scores[i].missing ?? null; });
   const team_report = teamReport(ctx, loser);
 
-  const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, timeline: timeline(od), players };
+  const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, timeline: timeline(od), players, chat: chatReport(od, players, wheel, loser) };
   if (verdict) return { status: 'ready', stage: 'leaver', verdict, ...common };
 
   // --- шаг 4 (продолжение): короткая игра / досрочная сдача без ливера ---
@@ -547,7 +572,11 @@ async function handleMatch(input: unknown, refresh: boolean) {
     parseState = { ...parseState, timed_out: true }; // не дождались — считаем по тому, что есть
   }
 
-  const result = analyze(matchId, od, stratz, heroes, items, parseState);
+  const [details, wheel] = await Promise.all([
+    worthIt && stratz.ok && !stratz.missing ? fetchStratzDetails(matchId) : Promise.resolve(null),
+    parsed ? wheelRefs() : Promise.resolve({}),
+  ]);
+  const result = analyze(matchId, od, stratz, heroes, items, parseState, details, wheel);
   // Кешируем, когда данные окончательные: Stratz ответил с позициями, режим отсечён или ждать уже бесполезно.
   // Если Stratz просто не ответил (сбой, лимит) — не кешируем: позиции и фид появятся при следующем запросе.
   const final = 'reason' in result && (result.reason === 'mode' || result.reason === 'lobby');

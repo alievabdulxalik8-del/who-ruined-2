@@ -5,6 +5,8 @@ import { GameChart } from './GameChart'
 import { PlayerCard } from './PlayerCard'
 import { Disagree } from './Disagree'
 import { Glossary } from './Glossary'
+import { FarmMap } from './FarmMap'
+import { ChatBlock } from './ChatBlock'
 import { HeroIcon, Section } from './ui'
 
 const FLAG_TEXT: Record<string, string> = {
@@ -79,6 +81,18 @@ export function Report({ data, onRefresh }: { data: Analysis; onRefresh: () => v
         </div>
         <Glossary />
       </Section>
+
+      {players.some((p) => p.heat?.length || p.route?.length) && (
+        <Section title="Карта: где фармил и как ходил">
+          <FarmMap players={[...losers, ...winners]} initial={culpritSlots[0] ?? losers[0]?.slot ?? null} />
+        </Section>
+      )}
+
+      {data.chat && (
+        <Section title="Чат и настроение">
+          <ChatBlock chat={data.chat} players={players} loserRu={data.match!.losing_side_ru} />
+        </Section>
+      )}
 
       <Episodes data={data} loser={loser} />
 

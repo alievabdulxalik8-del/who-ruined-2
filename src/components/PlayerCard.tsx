@@ -3,6 +3,7 @@ import type { PartKey, Player } from '../types'
 import { PART_NAMES, POSITION_NAMES, metricName } from '../explain'
 import { partDetails } from '../partDetails'
 import { Bar, HeroIcon, Items, scoreText } from './ui'
+import { FarmBlock } from './FarmBlock'
 
 const PARTS: PartKey[] = ['hero', 'lane', 'deaths', 'fights', 'role']
 
@@ -74,6 +75,8 @@ export function PlayerCard({ p, culprit, minutes }: { p: Player; culprit: boolea
           })}
         </div>
       )}
+
+      <FarmBlock p={p} />
 
       {p.score_parts?.hero?.farm_ignored && (
         <div className="rounded bg-amber-900/40 px-2 py-1 text-xs text-amber-200">Фарм не засчитан: пропустил половину и больше проигранных драк</div>

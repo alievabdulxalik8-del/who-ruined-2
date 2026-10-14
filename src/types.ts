@@ -52,6 +52,38 @@ export type Player = {
   wards: number | null
   score?: number | null
   score_parts?: ScoreParts | null
+  farm?: Farm | null
+  heat?: [number, number, number][] | null // [клетка x, клетка y, золото] — сетка 16×16
+  route?: [number, number, number][] | null // [секунда, x, y], координаты Stratz 64..192
+}
+
+export type Farm = {
+  item: {
+    key: string; name: string; minute: number
+    gpm_before: number | null; gpm_after: number | null
+    lhpm_before: number | null; lhpm_after: number | null
+    nw_at: number | null; avg_nw_at: number | null
+  } | null
+  gold_total: number | null
+  dead_min: number | null
+  lost_to_deaths: number | null
+  potential: number | null
+  nw_curve: number[] | null
+  avg_curve: number[] | null
+  checkpoints: { minute: number; nw: number; avg: number }[]
+  end: { minute: number; nw: number; avg: number; pct: number } | null
+}
+
+export type ChatTag = 'feed' | 'toxic' | 'give_up' | 'blame' | 'positive'
+export type Chat = {
+  messages: { t: number; slot: number; text: string; wheel: boolean; tags: ChatTag[] }[]
+  players: {
+    slot: number; messages: number; toxic: number; feed: number; give_up: number; blame: number; positive: number
+    first_toxic_minute: number | null
+    feed_check: { minute: number; text: string; deaths_5min: number; usual_5min: number; confirmed: boolean } | null
+  }[]
+  losers: { mood: string; toxic: number; blame: number; give_up: number; positive: number; feed: number }
+  winners: { mood: string; toxic: number; blame: number; give_up: number; positive: number; feed: number }
 }
 
 export type Verdict =
@@ -103,6 +135,7 @@ export type Analysis = {
   }
   timeline?: { gold_adv: number[]; xp_adv: number[] | null; events: TimelineEvent[] } | null
   players?: Player[]
+  chat?: Chat | null
   cached?: boolean
 }
 
