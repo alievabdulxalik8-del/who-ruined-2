@@ -25,4 +25,8 @@ export default defineConfig({
   // сайт живёт в подпапке GitHub Pages: alievabdulxalik8-del.github.io/who-ruined-2/
   base: '/who-ruined-2/',
   plugins: [react(), cspMeta()],
+  // время сборки внизу страницы — видно, открыта ли свежая версия
+  define: {
+    __BUILD__: JSON.stringify(new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })),
+  },
 })

@@ -151,6 +151,7 @@ export default function App() {
       {state.kind === 'error' && <ErrorBox text={state.text} />}
       {state.kind === 'recent' && <RecentList matches={state.matches} onOpen={openMatch} />}
       {state.kind === 'report' && <Report data={state.data} onRefresh={() => loadMatch(String(state.data.match_id), true)} />}
+      <footer className="mt-10 text-center text-[11px] text-slate-600">Версия сайта от {__BUILD__}</footer>
     </div>
   )
 }
