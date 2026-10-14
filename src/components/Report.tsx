@@ -8,6 +8,7 @@ import { Glossary } from './Glossary'
 import { FarmMap } from './FarmMap'
 import { ChatBlock } from './ChatBlock'
 import { HeroIcon, Section } from './ui'
+import { makeShareImage, shareOrDownload } from '../shareImage'
 
 const FLAG_TEXT: Record<string, string> = {
   turbo: 'Турбо: сравниваем с нормами Турбо',
@@ -117,6 +118,11 @@ function VerdictBlock({ data, culprits, onRefresh }: { data: Analysis; culprits:
   const v = data.verdict
   const m = data.match!
   const [copied, setCopied] = useState(false)
+  const [img, setImg] = useState<'idle' | 'busy' | 'error'>('idle')
+  const shareImg = async () => {
+    setImg('busy')
+    try { await shareOrDownload(await makeShareImage(data, culprits), data.match_id); setImg('idle') } catch { setImg('error') }
+  }
   const share = async () => {
     try { await navigator.clipboard.writeText(location.href); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { /* нет доступа к буферу */ }
   }
@@ -179,6 +185,9 @@ function VerdictBlock({ data, culprits, onRefresh }: { data: Analysis; culprits:
       )}
 
       <div className="mt-4 flex flex-wrap gap-2 text-sm">
+        <button onClick={shareImg} disabled={img === 'busy'} className="rounded-lg bg-slate-100 px-3 py-1.5 font-semibold text-slate-900 hover:bg-white disabled:opacity-50">
+          {img === 'busy' ? 'Готовим…' : img === 'error' ? 'Не получилось, ещё раз' : 'Картинка для друзей'}
+        </button>
         <button onClick={share} className="rounded-lg px-3 py-1.5 ring-1 ring-slate-600 hover:bg-slate-800">{copied ? 'Ссылка скопирована' : 'Скопировать ссылку'}</button>
         <button onClick={onRefresh} className="rounded-lg px-3 py-1.5 text-slate-400 ring-1 ring-slate-700 hover:bg-slate-800" title="Пересчитать без кеша">Пересчитать</button>
       </div>
