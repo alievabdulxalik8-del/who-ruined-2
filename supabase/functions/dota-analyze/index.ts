@@ -4,10 +4,11 @@
 //
 // POST { match: "8123456789" | "https://www.opendota.com/matches/8123456789", refresh?: true }
 // POST { player: "123456" | "7656119..." | "https://steamcommunity.com/profiles/7656119..." }
+// POST { feedback: { match_id, slot | null, comment? } } — кнопка «Не согласен» (slot null = «проиграли командой»)
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { scorePlayers, teamReport, verdictFor } from './score.ts';
 
-const VERSION = 3; // версия логики: при изменении старые разборы в кеше пересчитываются
+const VERSION = 4; // версия логики: при изменении старые разборы в кеше пересчитываются
 const OD = 'https://api.opendota.com/api';
 const STRATZ = 'https://api.stratz.com/graphql';
 const PARSE_WAIT_MS = 4 * 60_000; // сколько ждём разбора OpenDota/Stratz, потом считаем по тому, что есть
@@ -70,21 +71,35 @@ async function cachePut(key: string, status: string, result: unknown) {
   if (error) console.error('cache', error.message);
 }
 
-// Имена героев: OpenDota /constants/heroes, держим в кеше сутки.
-async function heroNames(): Promise<Record<string, string>> {
-  const c = await cacheGet('ref:heroes');
+// Справочники OpenDota (герои, предметы) держим в кеше сутки: в ответ кладём только нужное странице.
+async function reference<T>(key: string, url: string, build: (raw: any) => T): Promise<T> {
+  const c = await cacheGet(key);
   if (c && Date.now() - Date.parse(c.updated_at) < 86_400_000) return c.result;
   try {
-    const raw = await getJson(`${OD}/constants/heroes`);
-    const map: Record<string, string> = {};
-    for (const h of Object.values<any>(raw)) map[h.id] = h.localized_name;
-    await cachePut('ref:heroes', 'ref', map);
-    return map;
+    const value = build(await getJson(url));
+    await cachePut(key, 'ref', value);
+    return value;
   } catch (e) {
-    console.error('heroes', e);
-    return c?.result ?? {};
+    console.error(key, e);
+    return c?.result ?? build({});
   }
 }
+type Heroes = { names: Record<string, string>; keys: Record<string, string> };
+// keys: npc_dota_hero_antimage → antimage (имя картинки на CDN Steam)
+const heroRefs = () => reference<Heroes>('ref:heroes2', `${OD}/constants/heroes`, (raw) => {
+  const out: Heroes = { names: {}, keys: {} };
+  for (const h of Object.values<any>(raw)) {
+    out.names[h.id] = h.localized_name;
+    out.keys[h.id] = String(h.name ?? '').replace('npc_dota_hero_', '');
+  }
+  return out;
+});
+// id предмета → [ключ картинки, название]
+const itemRefs = () => reference<Record<string, [string, string]>>('ref:items', `${OD}/constants/items`, (raw) => {
+  const out: Record<string, [string, string]> = {};
+  for (const [k, it] of Object.entries<any>(raw)) if (it?.id) out[it.id] = [k, it.dname ?? k];
+  return out;
+});
 
 // ---------- шаг 1: ввод ----------
 
@@ -111,7 +126,7 @@ async function recentMatches(input: unknown) {
       message: 'Не понял профиль. Нужен числовой Steam ID, Friend ID или ссылка вида steamcommunity.com/profiles/…, opendota.com/players/…',
     }, 400);
   }
-  const [rows, heroes] = await Promise.all([getJson(`${OD}/players/${id}/recentMatches`), heroNames()]);
+  const [rows, heroes] = await Promise.all([getJson(`${OD}/players/${id}/recentMatches`), heroRefs()]);
   if (!Array.isArray(rows) || rows.length === 0) {
     return json({ status: 'error', message: 'Игр не найдено: профиль скрыт или игрок не открыл статистику матчей в Dota 2.' }, 404);
   }
@@ -122,7 +137,8 @@ async function recentMatches(input: unknown) {
       match_id: m.match_id,
       start_time: m.start_time,
       duration_sec: m.duration,
-      hero: heroes[m.hero_id] ?? `Герой ${m.hero_id}`,
+      hero: heroes.names[m.hero_id] ?? `Герой ${m.hero_id}`,
+      hero_key: heroes.keys[m.hero_id] ?? null,
       won: (m.player_slot < 128) === m.radiant_win,
       kda: `${m.kills}/${m.deaths}/${m.assists}`,
       game_mode: MODES[m.game_mode] ?? MODE_NAMES[m.game_mode] ?? `режим ${m.game_mode}`,
@@ -254,6 +270,28 @@ function ancientDestroyed(od: any, side: string) {
   return (od[`tower_status_${side}`] & 0b11000000000) === 0;
 }
 
+// Для графика «Как развивалась игра»: поминутное преимущество Света и события (только у разобранного матча).
+function timeline(od: any) {
+  if (!Array.isArray(od.radiant_gold_adv)) return null;
+  const events: any[] = [];
+  for (const f of od.teamfights ?? []) {
+    const d = (radiant: boolean) => (f.players ?? []).reduce((s: number, x: any, i: number) => s + ((i < 5) === radiant ? x.deaths ?? 0 : 0), 0);
+    const r = d(true), dd = d(false);
+    events.push({ t: f.start, type: 'fight', winner: r < dd ? 'radiant' : dd < r ? 'dire' : null, deaths: { radiant: r, dire: dd } });
+  }
+  for (const o of od.objectives ?? []) {
+    if (o.type === 'CHAT_MESSAGE_ROSHAN_KILL') events.push({ t: o.time, type: 'roshan', team: o.team === 2 ? 'radiant' : 'dire' });
+    if (o.type === 'building_kill' && /tower|rax|fort/.test(String(o.key))) {
+      const lost = String(o.key).includes('goodguys') ? 'radiant' : 'dire';
+      const what = /tower(\d)_(\w+)/.exec(o.key);
+      const name = what ? `T${what[1]} ${({ top: 'верх', mid: 'мид', bot: 'низ' } as any)[what[2]] ?? what[2]}`
+        : /rax/.test(o.key) ? 'казармы' : 'башня у трона';
+      events.push({ t: o.time, type: 'building', lost, name });
+    }
+  }
+  return { gold_adv: od.radiant_gold_adv, xp_adv: od.radiant_xp_adv ?? null, events: events.sort((a, b) => a.t - b.t) };
+}
+
 function leaveMinute(p: any): number | null {
   // connection_log есть только в разобранном матче: [{time, event, player_slot}]
   const log: any[] = p.connection_log ?? [];
@@ -262,7 +300,7 @@ function leaveMinute(p: any): number | null {
   return last && typeof last.time === 'number' ? Math.max(0, Math.floor(last.time / 60)) : null;
 }
 
-function analyze(matchId: string, od: any, stratz: any, heroes: Record<string, string>, parseState: any) {
+function analyze(matchId: string, od: any, stratz: any, heroes: Heroes, items: Record<string, [string, string]>, parseState: any) {
   const radiantWin = !!od.radiant_win;
   const loser: 'radiant' | 'dire' = radiantWin ? 'dire' : 'radiant';
   const parsed = od.version != null;
@@ -312,7 +350,12 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Record<string, s
       account_id: p.account_id ?? null,
       name: p.personaname ?? (p.account_id ? `Игрок ${p.account_id}` : 'Аноним'),
       hero_id: p.hero_id,
-      hero: heroes[p.hero_id] ?? `Герой ${p.hero_id}`,
+      hero: heroes.names[p.hero_id] ?? `Герой ${p.hero_id}`,
+      hero_key: heroes.keys[p.hero_id] ?? null,
+      items: [p.item_0, p.item_1, p.item_2, p.item_3, p.item_4, p.item_5, p.item_neutral]
+        .map((id: number, i: number) => (id && items[id] ? { id, key: items[id][0], name: items[id][1], neutral: i === 6 } : null))
+        .filter(Boolean),
+      net_worth: p.net_worth ?? null,
       rank_tier: p.rank_tier ?? null,
       position: stratzPos ?? fallback,
       position_source: stratzPos ? 'stratz' : fallback ? 'opendota' : null,
@@ -419,7 +462,7 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Record<string, s
   players.forEach((p: any, i: number) => { p.score = scores[i].total; p.score_raw = scores[i].raw_total ?? null; p.score_parts = scores[i].parts; p.score_missing = scores[i].missing ?? null; });
   const team_report = teamReport(ctx, loser);
 
-  const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, players };
+  const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, timeline: timeline(od), players };
   if (verdict) return { status: 'ready', stage: 'leaver', verdict, ...common };
 
   // --- шаг 4 (продолжение): короткая игра / досрочная сдача без ливера ---
@@ -481,7 +524,7 @@ async function handleMatch(input: unknown, refresh: boolean) {
   const modeOk = !!MODES[od.game_mode] && LOBBIES_OK.has(od.lobby_type);
   const worthIt = modeOk && !doomed;
   const noStratz: StratzResult = { ok: false, error: 'режим не оцениваем — не запрашивали' };
-  const [stratz, heroes] = await Promise.all([modeOk ? fetchStratz(matchId) : Promise.resolve(noStratz), heroNames()]);
+  const [stratz, heroes, items] = await Promise.all([modeOk ? fetchStratz(matchId) : Promise.resolve(noStratz), heroRefs(), itemRefs()]);
   if (worthIt && (!parsed || stratz.missing)) {
     parseState ??= { requested_at: new Date().toISOString() };
     if (!parsed && !parseState.opendota_job) {
@@ -504,7 +547,7 @@ async function handleMatch(input: unknown, refresh: boolean) {
     parseState = { ...parseState, timed_out: true }; // не дождались — считаем по тому, что есть
   }
 
-  const result = analyze(matchId, od, stratz, heroes, parseState);
+  const result = analyze(matchId, od, stratz, heroes, items, parseState);
   // Кешируем, когда данные окончательные: Stratz ответил с позициями, режим отсечён или ждать уже бесполезно.
   // Если Stratz просто не ответил (сбой, лимит) — не кешируем: позиции и фид появятся при следующем запросе.
   const final = 'reason' in result && (result.reason === 'mode' || result.reason === 'lobby');
@@ -513,12 +556,35 @@ async function handleMatch(input: unknown, refresh: boolean) {
   return json(result);
 }
 
+// Кнопка «Не согласен»: кто, по мнению пользователя, проиграл игру. Потом по этим ответам подбираем веса.
+async function saveFeedback(f: any) {
+  const matchId = Number(f?.match_id);
+  const slot = f?.slot == null ? null : Number(f.slot);
+  if (!Number.isSafeInteger(matchId) || matchId <= 0 || (slot != null && !(slot >= 0 && slot <= 4) && !(slot >= 128 && slot <= 132))) {
+    return json({ status: 'error', message: 'Неверные данные отзыва' }, 400);
+  }
+  const cached = await cacheGet(`match:${matchId}`);
+  if (!cached || cached.status !== 'ready') return json({ status: 'error', message: 'Этот матч ещё не разбирали' }, 404);
+  const v = cached.result.verdict ?? {};
+  const { error } = await db.from('dota_feedback').insert({
+    match_id: matchId,
+    slot,
+    comment: String(f.comment ?? '').slice(0, 500) || null,
+    verdict_kind: v.kind ?? null,
+    verdict_slots: v.slots ?? (v.slot != null ? [v.slot] : []),
+    logic_version: cached.version,
+  });
+  if (error) return json({ status: 'error', message: 'Не удалось сохранить отзыв' }, 500);
+  return json({ status: 'ok' });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ status: 'error', message: 'Нужен POST' }, 405);
   try {
     const body = await req.json().catch(() => ({}));
     if (body.player != null) return await recentMatches(body.player);
+    if (body.feedback != null) return await saveFeedback(body.feedback);
     return await handleMatch(body.match ?? body.match_id, !!body.refresh);
   } catch (e) {
     console.error(e);
