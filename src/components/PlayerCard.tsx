@@ -37,6 +37,7 @@ export function PlayerCard({ p, culprit }: { p: Player; culprit: boolean }) {
       {p.leaver && <div className="rounded bg-red-900/50 px-2 py-1 text-xs text-red-200">Вышел из игры{p.leaver.minute != null ? ` на ${p.leaver.minute}-й минуте` : ''}: {p.leaver.text}</div>}
       {p.intentional_feeding && <div className="rounded bg-red-900/50 px-2 py-1 text-xs text-red-200">Stratz отметил намеренный фид</div>}
 
+      {p.score_parts && <div className="-mb-1 text-[11px] text-slate-500">Полоски — вина по частям: длиннее и краснее — хуже</div>}
       {p.score_parts && (
         <div className="grid grid-cols-[4.5rem_1fr_2rem] items-center gap-x-2 gap-y-1 text-xs">
           {PARTS.map((k) => {
@@ -60,6 +61,7 @@ export function PlayerCard({ p, culprit }: { p: Player; culprit: boolean }) {
         </div>
       )}
 
+      {metrics.length > 0 && <div className="-mb-1 text-[11px] text-slate-500">Плашки — лучше, чем у X% игроков на этом герое: больше — лучше</div>}
       {metrics.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {metrics.map((m) => (
