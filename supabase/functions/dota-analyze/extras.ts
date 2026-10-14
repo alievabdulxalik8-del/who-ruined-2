@@ -14,6 +14,12 @@ export const STRATZ_DETAIL_QUERY = `query ($id: Long!) {
       playbackData {
         csEvents { time positionX positionY gold }
         playerUpdatePositionEvents { time x y }
+        killEvents { time target positionX positionY isGank isTpRecently isSmoke }
+        assistEvents { time target positionX positionY }
+        itemUsedEvents { time itemId target }
+        abilityUsedEvents { time abilityId target }
+        runeEvents { time rune action }
+        heroDamageEvents { time target value byAbility }
       }
     }
   }
@@ -157,7 +163,7 @@ export function chatReport(od: any, players: any[], wheel: Record<string, string
     const count = (t: string) => mine.filter((m) => m.tags.includes(t)).length;
     const deaths: number[] = (od.players[i]?.deaths_log ?? []).map((d: any) => d.time).filter((t: any) => typeof t === 'number');
     const threat = mine.find((m) => m.tags.includes('feed'));
-    let feedCheck = null;
+    let feedCheck: any = null;
     if (threat) {
       const after = deaths.filter((t) => t >= threat.t && t < threat.t + 300).length;
       const before = deaths.filter((t) => t < threat.t).length;

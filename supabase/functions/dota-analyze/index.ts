@@ -8,8 +8,9 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { scorePlayers, teamReport, verdictFor } from './score.ts';
 import { STRATZ_DETAIL_QUERY, chatReport, farmReport, stratzDetails, type Detail } from './extras.ts';
+import { ULTS_QUERY, buildUlts, roleReports } from './roles.ts';
 
-const VERSION = 7; // версия логики: при изменении старые разборы в кеше пересчитываются
+const VERSION = 8; // версия логики: при изменении старые разборы в кеше пересчитываются
 const OD = 'https://api.opendota.com/api';
 const STRATZ = 'https://api.stratz.com/graphql';
 const PARSE_WAIT_MS = 4 * 60_000; // сколько ждём разбора OpenDota/Stratz, потом считаем по тому, что есть
@@ -200,13 +201,30 @@ async function fetchStratz(matchId: string): Promise<StratzResult> {
   }
 }
 
-// Кривые фарма и позиции на карте — отдельным запросом: ответ большой (сотни КБ), нужен один раз на разбор.
-async function fetchStratzDetails(matchId: string): Promise<Map<number, Detail> | null> {
+// Кривые фарма, позиции на карте и события (убийства, предметы, способности, руны, урон) — отдельным
+// запросом: ответ большой (около мегабайта), нужен один раз на разбор.
+type Details = { map: Map<number, Detail>; raw: any };
+async function fetchStratzDetails(matchId: string): Promise<Details | null> {
   try {
-    return stratzDetails(await stratzCall(STRATZ_DETAIL_QUERY, { id: Number(matchId) }));
+    const raw = await stratzCall(STRATZ_DETAIL_QUERY, { id: Number(matchId) });
+    return { map: stratzDetails(raw), raw };
   } catch (e) {
     console.error('stratz details', e);
     return null;
+  }
+}
+
+// Ультимейты героев (Stratz constants) — сутки в кеше.
+async function ultRefs(): Promise<Record<string, [number, string]>> {
+  const c = await cacheGet('ref:ults');
+  if (c && Date.now() - Date.parse(c.updated_at) < 86_400_000) return c.result;
+  try {
+    const value = buildUlts(await stratzCall(ULTS_QUERY, {}));
+    if (Object.keys(value).length) await cachePut('ref:ults', 'ref', value);
+    return value;
+  } catch (e) {
+    console.error('ults', e);
+    return c?.result ?? {};
   }
 }
 
@@ -320,8 +338,9 @@ function leaveMinute(p: any): number | null {
 
 function analyze(
   matchId: string, od: any, stratz: any, heroes: Heroes, items: Record<string, [string, string]>, parseState: any,
-  details: Map<number, Detail> | null = null, wheel: Record<string, string> = {},
+  stratzExtra: Details | null = null, wheel: Record<string, string> = {}, ults: Record<string, [number, string]> = {},
 ) {
+  const details = stratzExtra?.map ?? null;
   const radiantWin = !!od.radiant_win;
   const loser: 'radiant' | 'dire' = radiantWin ? 'dire' : 'radiant';
   const parsed = od.version != null;
@@ -486,6 +505,13 @@ function analyze(
   const scores = scorePlayers(ctx);
   players.forEach((p: any, i: number) => { p.score = scores[i].total; p.score_raw = scores[i].raw_total ?? null; p.score_parts = scores[i].parts; p.score_missing = scores[i].missing ?? null; });
   const team_report = teamReport(ctx, loser);
+  // Разбор по позиции (pos 1 — башни и Рошан, pos 2 — ганки и ульта, pos 3 — инициация, pos 4–5 — руны и сейвы)
+  try {
+    const roles = roleReports(od, stratzExtra?.raw, players, items, ults);
+    players.forEach((p: any) => { p.role_report = roles.get(p.slot) ?? null; });
+  } catch (e) {
+    console.error('roles', e);
+  }
 
   const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, timeline: timeline(od), players, chat: chatReport(od, players, wheel, loser) };
   if (verdict) return { status: 'ready', stage: 'leaver', verdict, ...common };
@@ -572,11 +598,13 @@ async function handleMatch(input: unknown, refresh: boolean) {
     parseState = { ...parseState, timed_out: true }; // не дождались — считаем по тому, что есть
   }
 
-  const [details, wheel] = await Promise.all([
-    worthIt && stratz.ok && !stratz.missing ? fetchStratzDetails(matchId) : Promise.resolve(null),
+  const withDetails = worthIt && stratz.ok && !stratz.missing;
+  const [details, wheel, ults] = await Promise.all([
+    withDetails ? fetchStratzDetails(matchId) : Promise.resolve(null),
     parsed ? wheelRefs() : Promise.resolve({}),
+    withDetails ? ultRefs() : Promise.resolve({}),
   ]);
-  const result = analyze(matchId, od, stratz, heroes, items, parseState, details, wheel);
+  const result = analyze(matchId, od, stratz, heroes, items, parseState, details, wheel, ults);
   // Кешируем, когда данные окончательные: Stratz ответил с позициями, режим отсечён или ждать уже бесполезно.
   // Если Stratz просто не ответил (сбой, лимит) — не кешируем: позиции и фид появятся при следующем запросе.
   const final = 'reason' in result && (result.reason === 'mode' || result.reason === 'lobby');

@@ -18,7 +18,7 @@ export function FarmBlock({ p }: { p: Player }) {
     <div className="text-xs">
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center justify-between gap-2 py-0.5 text-left">
         <span className="text-slate-400">Фарм</span>
-        <span className="flex-1 truncate text-right text-slate-300">
+        <span className="min-w-0 flex-1 truncate text-right text-slate-300">
           {f.end ? <>ценность <b className={f.end.pct >= 100 ? 'text-emerald-300' : 'text-red-300'}>{f.end.pct}%</b> от средней</> : actualPct != null ? <>{actualPct}% от потенциала</> : ''}
         </span>
         <span className="text-slate-500">{open ? '▴' : '▾'}</span>

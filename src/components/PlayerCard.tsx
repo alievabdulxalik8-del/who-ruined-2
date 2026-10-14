@@ -4,6 +4,7 @@ import { PART_NAMES, POSITION_NAMES, metricName } from '../explain'
 import { partDetails } from '../partDetails'
 import { Bar, HeroIcon, Items, scoreText } from './ui'
 import { FarmBlock } from './FarmBlock'
+import { RoleBlock } from './RoleBlock'
 
 const PARTS: PartKey[] = ['hero', 'lane', 'deaths', 'fights', 'role']
 
@@ -11,7 +12,7 @@ export function PlayerCard({ p, culprit, minutes }: { p: Player; culprit: boolea
   const metrics = p.score_parts?.hero?.metrics ?? []
   const [open, setOpen] = useState<PartKey | null>(null)
   return (
-    <div className={`flex flex-col gap-3 rounded-xl p-3 ring-1 ${culprit ? 'bg-red-950/40 ring-red-700' : 'bg-slate-900 ring-slate-800'}`}>
+    <div className={`flex min-w-0 flex-col gap-3 rounded-xl p-3 ring-1 ${culprit ? 'bg-red-950/40 ring-red-700' : 'bg-slate-900 ring-slate-800'}`}>
       <div className="flex items-center gap-3">
         <HeroIcon heroKey={p.hero_key} name={p.hero} />
         <div className="min-w-0 flex-1">
@@ -77,6 +78,7 @@ export function PlayerCard({ p, culprit, minutes }: { p: Player; culprit: boolea
       )}
 
       <FarmBlock p={p} />
+      <RoleBlock p={p} />
 
       {p.score_parts?.hero?.farm_ignored && (
         <div className="rounded bg-amber-900/40 px-2 py-1 text-xs text-amber-200">Фарм не засчитан: пропустил половину и больше проигранных драк</div>

@@ -53,6 +53,7 @@ export type Player = {
   score?: number | null
   score_parts?: ScoreParts | null
   farm?: Farm | null
+  role_report?: RoleReport | null
   heat?: [number, number, number][] | null // [клетка x, клетка y, золото] — сетка 16×16
   route?: [number, number, number][] | null // [секунда, x, y], координаты Stratz 64..192
 }
@@ -73,6 +74,33 @@ export type Farm = {
   checkpoints: { minute: number; nw: number; avg: number }[]
   end: { minute: number; nw: number; avg: number; pct: number } | null
 }
+
+type UsedItem = { key: string; name: string; minute: number; uses: number; on_allies: number | null; saves: number | null; in_fights: number; fight_starts?: number }
+export type RoleReport =
+  | {
+      kind: 'carry'
+      towers: { list: { minute: number; what: string; came: boolean; tp: boolean }[]; total: number; came: number; tp: number }
+      roshan: { ours: number[]; theirs: number[]; damage_share: number | null; windows: { minute: number; taken: boolean }[] }
+    }
+  | {
+      kind: 'mid'
+      kills: number; gank_kills: number; gank_assists: number; tp_kills: number; smoke_kills: number; rotations: number
+      ult: { name: string; casts: number; hit: number; avg_targets: number | null; kills_after: number; damage: boolean } | null
+      runes: { taken: number; total: number }
+    }
+  | {
+      kind: 'support'
+      runes: { been: number; total: number; ours: number }
+      stacks: number | null
+      wards: { obs: number | null; sen: number | null; dewards: number | null }
+      save_items: UsedItem[]
+    }
+  | {
+      kind: 'offlane'
+      initiations: { count: number; won: number; fights: number }
+      init_items: UsedItem[]
+      after_objectives: { fights: number; present: number }
+    }
 
 export type ChatTag = 'feed' | 'toxic' | 'give_up' | 'blame' | 'positive'
 export type Chat = {
