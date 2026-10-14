@@ -105,7 +105,7 @@ export function Report({ data, onRefresh }: { data: Analysis; onRefresh: () => v
       <Links data={data} />
 
       {data.status === 'ready' && v && (
-        <Section title="Согласны с вердиктом?">
+        <Section title="Не согласен с вердиктом">
           <Disagree matchId={data.match_id} losers={losers} />
         </Section>
       )}
