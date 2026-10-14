@@ -1,12 +1,13 @@
 // Who Ruined 2.0 — сервер-посредник.
 // Этапы 2–3 плана: шаги 1–7 (ввод, кеш, сбор данных, проверка режима,
-// полнота разбора, ливеры/фидеры, позиции). Формулы оценки здесь пока нет.
+// полнота разбора, ливеры/фидеры, позиции). Этап 4: шаги 8–9 (балл вины и вердикт) — в score.ts.
 //
 // POST { match: "8123456789" | "https://www.opendota.com/matches/8123456789", refresh?: true }
 // POST { player: "123456" | "7656119..." | "https://steamcommunity.com/profiles/7656119..." }
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { scorePlayers, teamReport, verdictFor } from './score.ts';
 
-const VERSION = 1; // версия логики: при изменении старые разборы в кеше пересчитываются
+const VERSION = 2; // версия логики: при изменении старые разборы в кеше пересчитываются
 const OD = 'https://api.opendota.com/api';
 const STRATZ = 'https://api.stratz.com/graphql';
 const PARSE_WAIT_MS = 4 * 60_000; // сколько ждём разбора OpenDota/Stratz, потом считаем по тому, что есть
@@ -409,7 +410,16 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Record<string, s
     };
   }
 
-  const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, players };
+  // --- шаг 8: балл вины каждого из 10 игроков (победители — для сравнения) ---
+  const ctx = {
+    od, parsed, turbo, minutes: od.duration / 60, players,
+    laneOutcomes: { top: laneOut.topLaneOutcome ?? null, mid: laneOut.midLaneOutcome ?? null, bot: laneOut.bottomLaneOutcome ?? null },
+  };
+  const scores = scorePlayers(ctx);
+  players.forEach((p: any, i: number) => { p.score = scores[i].total; p.score_parts = scores[i].parts; p.score_missing = scores[i].missing ?? null; });
+  const team_report = teamReport(ctx, loser);
+
+  const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, players };
   if (verdict) return { status: 'ready', stage: 'leaver', verdict, ...common };
 
   // --- шаг 4 (продолжение): короткая игра / досрочная сдача без ливера ---
@@ -420,8 +430,12 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Record<string, s
     return { status: 'rejected', reason: 'surrender', message: 'Игра закончилась досрочной сдачей — слишком мало данных для честного разбора.', ...common };
   }
 
-  // Шаги 8–9 (формула и вердикт) — этап 4.
-  return { status: 'ready', stage: 'data', verdict: null, ...common };
+  // --- шаг 9: вердикт с порогом ---
+  const v = verdictFor(losers.map((p: any) => ({
+    slot: p.slot, name: p.name, hero: p.hero, total: p.score, imp: p.imp, position_uncertain: p.position_uncertain,
+  })), { parsed, positionsAgree });
+  if (!v) return { status: 'ready', stage: 'data', verdict: null, ...common };
+  return { status: 'ready', stage: 'verdict', verdict: v, ...common };
 }
 
 // ---------- шаги 2, 3, 5: кеш, сбор, ожидание разбора ----------
