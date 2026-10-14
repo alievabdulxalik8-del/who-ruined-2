@@ -50,6 +50,16 @@ export function PlayerCard({ p, culprit }: { p: Player; culprit: boolean }) {
         </div>
       )}
 
+      {p.score_parts?.hero?.farm_ignored && (
+        <div className="rounded bg-amber-900/40 px-2 py-1 text-xs text-amber-200">Фарм не засчитан: пропустил половину и больше проигранных драк</div>
+      )}
+      {(p.score_parts?.fights?.absent_lost ?? 0) > 0 && (
+        <div className="text-xs text-slate-400">
+          Не было в {p.score_parts!.fights!.absent_lost} из {p.score_parts!.fights!.lost_fights} проигранных драк
+          {p.score_parts!.fights!.absent_outnumbered ? ` (в меньшинстве — ${p.score_parts!.fights!.absent_outnumbered})` : ''}
+        </div>
+      )}
+
       {metrics.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {metrics.map((m) => (

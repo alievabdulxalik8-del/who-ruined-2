@@ -1,6 +1,6 @@
 // Этап 4: балл вины 0–100 (100 — худший) из пяти частей и вердикт с порогом.
-// Веса частей — из плана. Поправки по позициям, калибровка и пороги подобраны на 53 реальных матчах
-// (Ranked All Pick, 14.10.2026), см. README → «Подбор».
+// Веса частей — из плана. Поправки по позициям, калибровка и пороги подобраны на реальных матчах
+// (Ranked All Pick, 14.10.2026; пересчитаны после учёта пропущенных драк), см. README → «Подбор».
 
 // Веса частей по позициям, %: Герой, Линия, Смерти, Драки, Роль.
 export const WEIGHTS: Record<number, Record<Part, number>> = {
@@ -24,23 +24,23 @@ const HERO_METRICS: Record<number, string[]> = {
 // Сдвиг каждой части по позиции: выравнивает её среднее по позиции к общему (иначе, например,
 // мид всегда «плох» по урону зданиям, а керри — по доле урона к доле золота).
 const POS_OFFSET: Record<number, Record<Part, number>> = {
-  1: { hero: 6, lane: 4, deaths: 8, fights: -8, role: -1 },
-  2: { hero: 5, lane: -2, deaths: 4, fights: 3, role: -20 },
-  3: { hero: -4, lane: -8, deaths: 0, fights: 0, role: 4 },
-  4: { hero: -6, lane: -1, deaths: -5, fights: 3, role: 7 },
-  5: { hero: 0, lane: 7, deaths: -6, fights: 1, role: 10 },
+  1: { hero: 6, lane: 4, deaths: 7, fights: -6, role: -1 },
+  2: { hero: 5, lane: -2, deaths: 3, fights: 3, role: -23 },
+  3: { hero: -4, lane: -8, deaths: 1, fights: 0, role: 4 },
+  4: { hero: -6, lane: -1, deaths: -5, fights: 2, role: 9 },
+  5: { hero: -1, lane: 6, deaths: -6, fights: 1, role: 12 },
 };
 // Калибровка итога: у коров балл гуляет вдвое сильнее, чем у саппортов, и без неё виноватыми
 // почти всегда выходили бы pos 1–2. Переводим «насколько хуже типичного игрока этой позиции»
 // в общую шкалу: итог = GLOBAL.mean + GLOBAL.sd × (сырой − среднее позиции) / σ позиции.
 const POS_CALIB: Record<number, { mean: number; sd: number }> = {
-  1: { mean: 41.2, sd: 20.3 },
-  2: { mean: 41.5, sd: 20.0 },
-  3: { mean: 39.8, sd: 15.0 },
-  4: { mean: 38.3, sd: 14.3 },
-  5: { mean: 37.6, sd: 12.7 },
+  1: { mean: 39.9, sd: 19.1 },
+  2: { mean: 40.0, sd: 19.0 },
+  3: { mean: 37.9, sd: 13.2 },
+  4: { mean: 36.0, sd: 11.8 },
+  5: { mean: 35.4, sd: 11.2 },
 };
-const GLOBAL = { mean: 39.7, sd: 16.7 };
+const GLOBAL = { mean: 37.8, sd: 15.3 };
 
 export const VERDICT = {
   mainGap: 12, // лучший балл выше второго на столько пунктов… (в плане 15; после калибровки шкала у́же)
@@ -83,15 +83,51 @@ function outcomeFor(raw: string, side: string): keyof typeof LANE_SCORE {
 }
 
 // ---------- Герой ----------
-function heroPart(p: any, pos: number) {
+const FARM_METRICS = new Set(['gold_per_min', 'xp_per_min', 'last_hits_per_min']);
+
+// farmIgnored: игрок пропустил большую часть проигранных драк — его фарм не засчитываем как заслугу
+// (процентиль GPM/XPM/добиваний не выше 50: золото, которое не дошло до драк, команде не помогло).
+function heroPart(p: any, pos: number, farmIgnored: boolean) {
   const b = p.benchmarks;
   if (!b) return null;
-  const metrics = HERO_METRICS[pos].filter((k) => b[k]?.pct != null).map((k) => ({
-    key: k, raw: r1(b[k].raw), pct: Math.round(b[k].pct * 100),
-  }));
+  const metrics = HERO_METRICS[pos].filter((k) => b[k]?.pct != null).map((k) => {
+    const pct = Math.round(b[k].pct * 100);
+    const capped = farmIgnored && FARM_METRICS.has(k) && pct > 50;
+    return { key: k, raw: r1(b[k].raw), pct, ...(capped ? { counted: 50 } : {}) };
+  });
   if (!metrics.length) return null;
   // pct у OpenDota: 100 — лучше всех на этом герое (для смертей уже перевёрнуто).
-  return { score: clamp(100 - mean(metrics.map((m) => m.pct))), metrics };
+  return {
+    score: clamp(100 - mean(metrics.map((m) => m.counted ?? m.pct))),
+    metrics,
+    farm_ignored: metrics.some((m) => m.counted != null),
+  };
+}
+
+// Проигранные драки команды без этого игрока. Игрок был в драке, если нанёс урон, лечил или умер.
+// «В меньшинстве» — когда в драке участвовало меньше наших, чем соперников.
+function absence(c: Ctx, me: any, idx: number) {
+  const fights: any[] = c.od.teamfights ?? [];
+  if (!fights.length) return null;
+  const present = (x: any) => !!x && ((x.damage ?? 0) > 0 || (x.healing ?? 0) > 0 || (x.deaths ?? 0) > 0);
+  let lost = 0, absent = 0, outnumbered = 0;
+  const minutes: number[] = [];
+  for (const f of fights) {
+    const ps: any[] = f.players ?? [];
+    const side = (i: number) => c.players[i]?.side;
+    const deaths = (ours: boolean) => sum(ps.filter((_, i) => (side(i) === me.side) === ours).map((x) => x.deaths ?? 0));
+    if (deaths(true) <= deaths(false)) continue; // драку не проиграли
+    lost++;
+    if (present(ps[idx])) continue;
+    absent++;
+    const n = (ours: boolean) => ps.filter((x, i) => (side(i) === me.side) === ours && present(x)).length;
+    if (n(true) < n(false)) outnumbered++;
+    minutes.push(Math.floor((f.start ?? 0) / 60));
+  }
+  // Каждая пропущенная проигранная драка = 1, если команда при этом была в меньшинстве — 1.5.
+  // Делим не меньше чем на 3, чтобы одна неудачная драка за игру не давала 100.
+  const score = lost ? clamp((100 * (absent + 0.5 * outnumbered)) / Math.max(lost, 3)) : 0;
+  return { lost, absent, outnumbered, minutes, score };
 }
 
 // ---------- Линия ----------
@@ -175,7 +211,7 @@ function deathsPart(c: Ctx, me: any, p: any) {
 }
 
 // ---------- Драки ----------
-function fightsPart(c: Ctx, me: any, p: any, pos: number) {
+function fightsPart(c: Ctx, me: any, p: any, pos: number, away: ReturnType<typeof absence>) {
   const team = c.od.players.filter((_: any, i: number) => c.players[i].side === me.side);
   const teamKills = sum(team.map((x: any) => x.kills ?? 0));
   const tp = p.teamfight_participation ?? (teamKills ? ((p.kills ?? 0) + (p.assists ?? 0)) / teamKills : null);
@@ -188,9 +224,14 @@ function fightsPart(c: Ctx, me: any, p: any, pos: number) {
   // Кор, который забрал 30% золота и дал 12% урона, получает штраф 60.
   const efficiency = goldShare > dmgShare && goldShare > 0 ? clamp(((goldShare - dmgShare) / goldShare) * 100) : 0;
   const participation = clamp((1 - Math.min(1, tp)) * 100);
+  // Если есть разбор драк: треть балла — пропущенные проигранные драки (особенно в меньшинстве).
+  const score = away
+    ? 0.35 * participation + 0.3 * efficiency + 0.35 * away.score
+    : 0.5 * participation + 0.5 * efficiency;
   return {
-    score: clamp(0.5 * participation + 0.5 * efficiency),
+    score: clamp(score),
     participation: Math.round(Math.min(1, tp) * 100),
+    ...(away ? { lost_fights: away.lost, absent_lost: away.absent, absent_outnumbered: away.outnumbered, absent_minutes: away.minutes } : {}),
     damage_share: Math.round(dmgShare * 100),
     gold_share: Math.round(goldShare * 100),
   };
@@ -246,11 +287,14 @@ export function scorePlayers(c: Ctx) {
     const p = c.od.players[i];
     const pos = me.position;
     if (!pos) return { slot: me.slot, total: null, parts: null };
+    const away = absence(c, me, i);
+    // Пропустил половину и больше проигранных драк (минимум 2) — фарм не засчитываем как заслугу.
+    const farmIgnored = !!away && away.lost >= 2 && away.absent / away.lost >= 0.5;
     const parts: Record<Part, any> = {
-      hero: heroPart(p, pos),
+      hero: heroPart(p, pos, farmIgnored),
       lane: lanePart(c, me, p, pos),
       deaths: deathsPart(c, me, p),
-      fights: fightsPart(c, me, p, pos),
+      fights: fightsPart(c, me, p, pos, away),
       role: rolePart(c, me, p, pos),
     };
     const w = WEIGHTS[pos];

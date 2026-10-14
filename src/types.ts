@@ -8,7 +8,7 @@ export type Item = { id: number; key: string; name: string; neutral: boolean }
 export type DeathDetail = { minute: number; weight: number; gold_lost: number | null; tags: string[] }
 
 export type ScoreParts = {
-  hero?: { score: number; metrics: { key: string; raw: number; pct: number }[] } | null
+  hero?: { score: number; metrics: { key: string; raw: number; pct: number; counted?: number }[]; farm_ignored?: boolean } | null
   lane?: {
     score: number
     lane: 'top' | 'mid' | 'bot' | null
@@ -17,7 +17,16 @@ export type ScoreParts = {
     opponent_slot: number | null
   } | null
   deaths?: { score: number; deaths: number; deaths_pct?: number; avg_weight?: number; details: DeathDetail[] } | null
-  fights?: { score: number; participation: number; damage_share: number; gold_share: number } | null
+  fights?: {
+    score: number
+    participation: number
+    damage_share: number
+    gold_share: number
+    lost_fights?: number
+    absent_lost?: number
+    absent_outnumbered?: number
+    absent_minutes?: number[]
+  } | null
   role?: ({ score: number } & Record<string, number>) | null
 }
 

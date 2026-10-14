@@ -4,6 +4,7 @@ import { LANE_NAMES, OUTCOME_NAMES, adviceFor, mmss, reasonsFor } from '../expla
 import { GameChart } from './GameChart'
 import { PlayerCard } from './PlayerCard'
 import { Disagree } from './Disagree'
+import { Glossary } from './Glossary'
 import { HeroIcon, Section } from './ui'
 
 const FLAG_TEXT: Record<string, string> = {
@@ -76,10 +77,7 @@ export function Report({ data, onRefresh }: { data: Analysis; onRefresh: () => v
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {winners.map((p) => <PlayerCard key={p.slot} p={p} culprit={false} />)}
         </div>
-        <p className="mt-3 text-xs text-slate-500">
-          Балл вины 0–100: чем больше, тем хуже игрок сыграл по сравнению с игроками на том же герое и позиции.
-          Проценты — в какую долю игроков на этом герое попал показатель (больше — лучше).
-        </p>
+        <Glossary />
       </Section>
 
       <Episodes data={data} loser={loser} />

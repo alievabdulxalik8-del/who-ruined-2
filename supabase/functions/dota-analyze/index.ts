@@ -8,7 +8,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { scorePlayers, teamReport, verdictFor } from './score.ts';
 
-const VERSION = 4; // версия логики: при изменении старые разборы в кеше пересчитываются
+const VERSION = 6; // версия логики: при изменении старые разборы в кеше пересчитываются
 const OD = 'https://api.opendota.com/api';
 const STRATZ = 'https://api.stratz.com/graphql';
 const PARSE_WAIT_MS = 4 * 60_000; // сколько ждём разбора OpenDota/Stratz, потом считаем по тому, что есть

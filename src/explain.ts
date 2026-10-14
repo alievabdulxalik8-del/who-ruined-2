@@ -52,7 +52,12 @@ function reasonText(p: Player, part: PartKey, minutes: number): string | null {
   const s = p.score_parts?.[part]
   if (!s) return null
   if (part === 'hero') {
-    const m = [...(p.score_parts!.hero!.metrics ?? [])].sort((a, b) => a.pct - b.pct)[0]
+    const h = p.score_parts!.hero!
+    if (h.farm_ignored) {
+      const g = h.metrics.find((x) => x.key === 'gold_per_min')
+      return `${g ? `GPM ${fmt(g.raw)} — лучше, чем у ${g.pct}% игроков на ${p.hero}, ` : 'Фарм хороший, '}но не засчитан: этот фарм не дошёл до драк команды.`
+    }
+    const m = [...(h.metrics ?? [])].sort((a, b) => a.pct - b.pct)[0]
     if (!m) return null
     const raw = m.raw >= 100 ? fmt(m.raw) : String(m.raw).replace('.', ',')
     return `${metricName(m.key)} ${raw} — хуже, чем у ${100 - m.pct}% игроков на ${p.hero}.`
@@ -74,6 +79,11 @@ function reasonText(p: Player, part: PartKey, minutes: number): string | null {
   }
   if (part === 'fights') {
     const f = p.score_parts!.fights!
+    if (f.absent_lost && f.lost_fights && f.absent_lost / f.lost_fights >= 0.4) {
+      const outn = f.absent_outnumbered ? `, из них в ${f.absent_outnumbered} команда дралась в меньшинстве` : ''
+      const when = f.absent_minutes?.length ? ` (${f.absent_minutes.slice(0, 4).map((m) => `${m}-я`).join(', ')} мин)` : ''
+      return `Не было в ${f.absent_lost} из ${f.lost_fights} проигранных драк${when}${outn}.`
+    }
     const eff = f.gold_share > f.damage_share
       ? `; забрал ${f.gold_share}% золота команды, а урона дал ${f.damage_share}%`
       : ''
@@ -112,7 +122,7 @@ const ADVICE: Record<PartKey, (pos: number) => string> = {
   lane: () => 'Разберите свою линию: сколько крипов вы добили и отдали к 10-й минуте. Если вас прессуют — зовите мида или саппорта и не теряйте опыт под вышкой.',
   deaths: () => 'Меньше смертей без размена, особенно после 25-й минуты: перед выходом проверьте, где враги, и держите золото на выкуп.',
   fights: (pos) => pos <= 3
-    ? 'Заходите в драки вместе с командой и отдавайте урон: золото, которое вы забрали, должно превращаться в урон.'
+    ? 'Следите за картой: когда команда собирается в драку, идите к ней, а не фармите в другом углу — четверо против пятерых почти всегда проигрывают.'
     : 'Будьте рядом с командой во время драк — много драк прошло без вас.',
   role: (pos) => pos >= 4
     ? 'Ставьте варды постоянно (примерно один каждые 3 минуты), снимайте вражеские и стакайте лагеря для своих коров.'
