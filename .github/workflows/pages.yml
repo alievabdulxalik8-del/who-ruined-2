@@ -1,5 +1,5 @@
 # Сайт → GitHub Pages при каждом обновлении main.
-# Один раз нужно включить: Settings → Pages → Source: «GitHub Actions».
+# Pages включаются сами (enablement); если не выйдет — Settings → Pages → Source: «GitHub Actions».
 name: Сайт на GitHub Pages
 
 on:
@@ -29,6 +29,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true # включить Pages (источник «GitHub Actions»), если ещё не включены
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
