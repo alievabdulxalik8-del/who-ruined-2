@@ -1,5 +1,6 @@
 // Этап 4: балл вины 0–100 (100 — худший) из пяти частей и вердикт с порогом.
-// Все веса и пороги — стартовые, их подбираем на реальных матчах (см. README).
+// Веса частей — из плана. Поправки по позициям, калибровка и пороги подобраны на 53 реальных матчах
+// (Ranked All Pick, 14.10.2026), см. README → «Подбор».
 
 // Веса частей по позициям, %: Герой, Линия, Смерти, Драки, Роль.
 export const WEIGHTS: Record<number, Record<Part, number>> = {
@@ -20,8 +21,29 @@ const HERO_METRICS: Record<number, string[]> = {
   5: ['assists_per_min', 'hero_healing_per_min', 'deaths_per_min'],
 };
 
+// Сдвиг каждой части по позиции: выравнивает её среднее по позиции к общему (иначе, например,
+// мид всегда «плох» по урону зданиям, а керри — по доле урона к доле золота).
+const POS_OFFSET: Record<number, Record<Part, number>> = {
+  1: { hero: 6, lane: 4, deaths: 8, fights: -8, role: -1 },
+  2: { hero: 5, lane: -2, deaths: 4, fights: 3, role: -20 },
+  3: { hero: -4, lane: -8, deaths: 0, fights: 0, role: 4 },
+  4: { hero: -6, lane: -1, deaths: -5, fights: 3, role: 7 },
+  5: { hero: 0, lane: 7, deaths: -6, fights: 1, role: 10 },
+};
+// Калибровка итога: у коров балл гуляет вдвое сильнее, чем у саппортов, и без неё виноватыми
+// почти всегда выходили бы pos 1–2. Переводим «насколько хуже типичного игрока этой позиции»
+// в общую шкалу: итог = GLOBAL.mean + GLOBAL.sd × (сырой − среднее позиции) / σ позиции.
+const POS_CALIB: Record<number, { mean: number; sd: number }> = {
+  1: { mean: 41.2, sd: 20.3 },
+  2: { mean: 41.5, sd: 20.0 },
+  3: { mean: 39.8, sd: 15.0 },
+  4: { mean: 38.3, sd: 14.3 },
+  5: { mean: 37.6, sd: 12.7 },
+};
+const GLOBAL = { mean: 39.7, sd: 16.7 };
+
 export const VERDICT = {
-  mainGap: 15, // лучший балл выше второго на столько пунктов…
+  mainGap: 12, // лучший балл выше второго на столько пунктов… (в плане 15; после калибровки шкала у́же)
   mainMin: 60, // …и выше этого → «Главная причина — X»
   twoGap: 5, // разрыв от этого до mainGap → «Больше всех ошиблись X и Y»
   teamMax: 45, // все баллы ниже → «Проиграли командой»
@@ -138,11 +160,12 @@ function deathsPart(c: Ctx, me: any, p: any) {
     }
     return { minute: Math.floor(t / 60), weight: r1(w), gold_lost: d.gold_lost ?? null, tags };
   });
-  // Насколько смерти хуже нормы героя (процентиль OpenDota), умноженное на средний вес смерти.
+  // Насколько смерти хуже нормы героя (процентиль OpenDota), плюс сдвиг за «дорогие» смерти:
+  // средний вес 1.5 → +10, 0.7 → −6. Умножение насыщало шкалу: у половины проигравших было 100.
   const avgWeight = details.length ? mean(details.map((d) => d.weight)) : 1;
   const base = 100 - pct * 100;
   return {
-    score: clamp(base * avgWeight),
+    score: clamp(base + 20 * (avgWeight - 1)),
     deaths: p.deaths,
     deaths_pct: Math.round(pct * 100),
     weighted: r1(sum(details.map((d) => d.weight))),
@@ -232,10 +255,12 @@ export function scorePlayers(c: Ctx) {
     };
     const w = WEIGHTS[pos];
     const avail = (Object.keys(w) as Part[]).filter((k) => parts[k]);
+    for (const k of avail) parts[k].score = Math.round(clamp(parts[k].score + POS_OFFSET[pos][k]));
     const wsum = sum(avail.map((k) => w[k]));
-    const total = wsum ? sum(avail.map((k) => w[k] * parts[k].score)) / wsum : null;
-    for (const k of avail) parts[k].score = Math.round(parts[k].score);
-    return { slot: me.slot, total: total == null ? null : Math.round(total), parts, missing: (Object.keys(w) as Part[]).filter((k) => !parts[k]) };
+    const raw = wsum ? sum(avail.map((k) => w[k] * parts[k].score)) / wsum : null;
+    const cal = POS_CALIB[pos];
+    const total = raw == null ? null : Math.round(clamp(GLOBAL.mean + GLOBAL.sd * (raw - cal.mean) / cal.sd));
+    return { slot: me.slot, total, raw_total: raw == null ? null : Math.round(raw), parts, missing: (Object.keys(w) as Part[]).filter((k) => !parts[k]) };
   });
 }
 

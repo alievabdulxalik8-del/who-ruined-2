@@ -7,7 +7,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { scorePlayers, teamReport, verdictFor } from './score.ts';
 
-const VERSION = 2; // версия логики: при изменении старые разборы в кеше пересчитываются
+const VERSION = 3; // версия логики: при изменении старые разборы в кеше пересчитываются
 const OD = 'https://api.opendota.com/api';
 const STRATZ = 'https://api.stratz.com/graphql';
 const PARSE_WAIT_MS = 4 * 60_000; // сколько ждём разбора OpenDota/Stratz, потом считаем по тому, что есть
@@ -416,7 +416,7 @@ function analyze(matchId: string, od: any, stratz: any, heroes: Record<string, s
     laneOutcomes: { top: laneOut.topLaneOutcome ?? null, mid: laneOut.midLaneOutcome ?? null, bot: laneOut.bottomLaneOutcome ?? null },
   };
   const scores = scorePlayers(ctx);
-  players.forEach((p: any, i: number) => { p.score = scores[i].total; p.score_parts = scores[i].parts; p.score_missing = scores[i].missing ?? null; });
+  players.forEach((p: any, i: number) => { p.score = scores[i].total; p.score_raw = scores[i].raw_total ?? null; p.score_parts = scores[i].parts; p.score_missing = scores[i].missing ?? null; });
   const team_report = teamReport(ctx, loser);
 
   const common = { ...base, match, sources, flags, lanes, positions_agree: positionsAgree, team_report, players };
