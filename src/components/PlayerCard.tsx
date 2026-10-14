@@ -1,11 +1,14 @@
+import { useState } from 'react'
 import type { PartKey, Player } from '../types'
 import { PART_NAMES, POSITION_NAMES, metricName } from '../explain'
+import { partDetails } from '../partDetails'
 import { Bar, HeroIcon, Items, scoreText } from './ui'
 
 const PARTS: PartKey[] = ['hero', 'lane', 'deaths', 'fights', 'role']
 
-export function PlayerCard({ p, culprit }: { p: Player; culprit: boolean }) {
+export function PlayerCard({ p, culprit, minutes }: { p: Player; culprit: boolean; minutes: number }) {
   const metrics = p.score_parts?.hero?.metrics ?? []
+  const [open, setOpen] = useState<PartKey | null>(null)
   return (
     <div className={`flex flex-col gap-3 rounded-xl p-3 ring-1 ${culprit ? 'bg-red-950/40 ring-red-700' : 'bg-slate-900 ring-slate-800'}`}>
       <div className="flex items-center gap-3">
@@ -37,16 +40,37 @@ export function PlayerCard({ p, culprit }: { p: Player; culprit: boolean }) {
       {p.leaver && <div className="rounded bg-red-900/50 px-2 py-1 text-xs text-red-200">Вышел из игры{p.leaver.minute != null ? ` на ${p.leaver.minute}-й минуте` : ''}: {p.leaver.text}</div>}
       {p.intentional_feeding && <div className="rounded bg-red-900/50 px-2 py-1 text-xs text-red-200">Stratz отметил намеренный фид</div>}
 
-      {p.score_parts && <div className="-mb-1 text-[11px] text-slate-500">Полоски — вина по частям: длиннее и краснее — хуже</div>}
+      {p.score_parts && <div className="-mb-1 text-[11px] text-slate-500">Полоски — вина по частям: длиннее и краснее — хуже. Нажмите, чтобы увидеть, как считается</div>}
       {p.score_parts && (
-        <div className="grid grid-cols-[4.5rem_1fr_2rem] items-center gap-x-2 gap-y-1 text-xs">
+        <div className="flex flex-col gap-1 text-xs">
           {PARTS.map((k) => {
             const s = p.score_parts?.[k]?.score
-            return s == null ? null : [
-              <span key={`${k}n`} className="text-slate-400">{PART_NAMES[k]}</span>,
-              <Bar key={`${k}b`} value={s} />,
-              <span key={`${k}v`} className="text-right tabular-nums text-slate-300">{s}</span>,
-            ]
+            if (s == null) return null
+            const isOpen = open === k
+            const d = isOpen ? partDetails(p, k, minutes) : null
+            return (
+              <div key={k}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : k)}
+                  aria-expanded={isOpen}
+                  className="grid w-full grid-cols-[4.5rem_1fr_2rem_0.75rem] items-center gap-x-2 py-0.5 text-left"
+                >
+                  <span className="text-slate-400">{PART_NAMES[k]}</span>
+                  <Bar value={s} />
+                  <span className="text-right tabular-nums text-slate-300">{s}</span>
+                  <span className="text-slate-500">{isOpen ? '▴' : '▾'}</span>
+                </button>
+                {d && (
+                  <div className="mt-1 rounded bg-slate-800/70 px-2 py-1.5 text-[11px] leading-snug text-slate-300">
+                    <p className="text-slate-400">{d.how}</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {d.lines.map((l) => <li key={l}>{l}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )
           })}
         </div>
       )}

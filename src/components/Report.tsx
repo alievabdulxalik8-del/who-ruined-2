@@ -71,11 +71,11 @@ export function Report({ data, onRefresh }: { data: Analysis; onRefresh: () => v
       <Section title="Игроки">
         <h3 className="mb-2 text-sm font-semibold text-red-300">Проиграли — {data.match!.losing_side_ru}</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {losers.map((p) => <PlayerCard key={p.slot} p={p} culprit={culpritSlots.includes(p.slot)} />)}
+          {losers.map((p) => <PlayerCard key={p.slot} p={p} culprit={culpritSlots.includes(p.slot)} minutes={data.match!.duration_min} />)}
         </div>
         <h3 className="mb-2 mt-5 text-sm font-semibold text-emerald-300">Победили — для сравнения</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {winners.map((p) => <PlayerCard key={p.slot} p={p} culprit={false} />)}
+          {winners.map((p) => <PlayerCard key={p.slot} p={p} culprit={false} minutes={data.match!.duration_min} />)}
         </div>
         <Glossary />
       </Section>
